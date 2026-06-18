@@ -64,6 +64,12 @@ function buildPayload(to, msg) {
 export async function sendWhatsAppMessage(to, msg) {
   if (!isWhatsAppConfigured()) return false;
 
+  // 🛠️ LIMPIEZA CLAVE PARA ARGENTINA: Quitar el "9" si viene de celular (54911... -> 5411...)
+  let cleanTo = to.replace(/\D/g, ""); // Borra cualquier espacio o guión por las dudas
+  if (cleanTo.startsWith("549")) {
+    cleanTo = "54" + cleanTo.slice(3);
+  }
+
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_ID}/messages`;
   try {
     const res = await fetch(url, {
@@ -72,9 +78,12 @@ export async function sendWhatsAppMessage(to, msg) {
         Authorization: `Bearer ${ACCESS_TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(buildPayload(to, msg)),
+      // Usamos el número limpio acá 👇
+      body: JSON.stringify(buildPayload(cleanTo, msg)),
     });
+    
     if (!res.ok) {
+      // 🚨 Esto nos va a escupir en los logs de Vercel por qué rebota exactamente si llega a fallar
       console.error("WhatsApp API error:", res.status, await res.text());
       return false;
     }

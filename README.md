@@ -140,3 +140,6 @@ autoadministre. 🚀
 -------Token Temporal--------
 EAAM9BXipjAcBRqSRqpRn7T5E0vgcZCSwumSjmP17vAZCYONN9SkBZAqD421ZCkMot7uZCbXby7WggxPXTaxpXmLQj00uGgVHth6azcEq1DvoGpJRbvsZCiARmDZCWtZABaoCPq8A5UNxLKH9NBfq4M7KYBE2PYBKjyRIdVUrzBowMbtsURAHWcggL1hiOvnebxE1gjS5VfWP5JlHNh9j53MejrAMgI5arGXcqWFwb4CoyySTd5i7Ieq3dRKYftDCEjKeICQC4wZBinZBbjWUkgufLPlyJO
 -------Token Temporal--------
+
+cb3692ecbc411d07ab3b161422beecdd - Clave secreta de la aplicación
+Clave secreta de la aplicación
