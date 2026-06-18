@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  --color-wa-bg: oklch(0.18 0.02 160);
+  --color-wa-panel: oklch(0.23 0.02 160);
+  --color-wa-green: oklch(0.72 0.16 155);
+  --color-wa-green-dark: oklch(0.55 0.13 155);
+  --color-wa-bubble-user: oklch(0.62 0.13 150);
+  --color-wa-bubble-bot: oklch(0.97 0 0);
+  --font-sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-wa-bg);
+  color: oklch(0.95 0 0);
+  font-family: var(--font-sans);
+}
+
+.chat-pattern {
+  background-color: oklch(0.15 0.02 160);
+  background-image: radial-gradient(oklch(1 0 0 / 0.03) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 0.15);
+  border-radius: 999px;
+}
