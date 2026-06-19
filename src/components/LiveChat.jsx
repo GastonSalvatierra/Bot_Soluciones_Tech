@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+
+function renderText(text) {
+  // Convierte *negrita* a <strong>
+  return text.replace(/\*([^*]+)\*/g, "<strong>$1</strong>");
+}
 
 function Bubble({ msg, onAction }) {
   const isUser = msg.role === "user";
@@ -13,7 +18,10 @@ function Bubble({ msg, onAction }) {
             : "bg-wa-bubble-bot text-neutral-900 rounded-bl-sm"
         }`}
       >
-        <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+        <p
+          className="whitespace-pre-wrap leading-relaxed"
+          dangerouslySetInnerHTML={{ __html: renderText(msg.text || "") }}
+        />
 
         {msg.kind === "buttons" && msg.buttons && (
           <div className="mt-2 flex flex-col gap-1">
@@ -79,25 +87,42 @@ function Bubble({ msg, onAction }) {
 
 export default function LiveChat({ conversationId, onAction }) {
   const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(true);
   const bottomRef = useRef(null);
+  const seenIds = useRef(new Set());
+  const pollingRef = useRef(null);
+
+  const fetchMessages = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/messages?conversationId=${encodeURIComponent(conversationId)}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const newMsgs = data.filter((m) => !seenIds.current.has(m.id));
+      if (newMsgs.length > 0) {
+        newMsgs.forEach((m) => seenIds.current.add(m.id));
+        setMessages((prev) => [...prev, ...newMsgs]);
+      }
+    } catch {
+      // ignorar errores de red transitorios
+    } finally {
+      setLoading(false);
+    }
+  }, [conversationId]);
 
   useEffect(() => {
+    // Reset al cambiar de conversación
     setMessages([]);
-    const es = new EventSource(
-      `/api/messages?stream=1&conversationId=${encodeURIComponent(conversationId)}`,
-    );
-    es.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        setMessages((prev) =>
-          prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
-        );
-      } catch {
-        /* ignore */
-      }
-    };
-    return () => es.close();
-  }, [conversationId]);
+    seenIds.current = new Set();
+    setLoading(true);
+
+    fetchMessages();
+    pollingRef.current = setInterval(fetchMessages, 1000);
+
+    return () => clearInterval(pollingRef.current);
+  }, [conversationId, fetchMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -111,18 +136,22 @@ export default function LiveChat({ conversationId, onAction }) {
         </div>
         <div>
           <p className="text-sm font-semibold">Bot WhatsApp</p>
-          <p className="text-xs text-white/70">en linea · {conversationId}</p>
+          <p className="text-xs text-white/70">en línea · {conversationId}</p>
         </div>
       </div>
 
       <div className="chat-pattern flex-1 overflow-y-auto p-4">
-        {messages.length === 0 ? (
+        {loading ? (
+          <p className="mt-10 text-center text-sm text-white/50">Cargando…</p>
+        ) : messages.length === 0 ? (
           <p className="mt-10 text-center text-sm text-white/50">
-            No hay mensajes todavia. Escribi algo en el simulador o desde
-            WhatsApp para iniciar el flujo.
+            Presioná <strong className="text-white/70">👋 Iniciar</strong> para
+            arrancar el flujo.
           </p>
         ) : (
-          messages.map((m) => <Bubble key={m.id} msg={m} onAction={onAction} />)
+          messages.map((m) => (
+            <Bubble key={m.id} msg={m} onAction={onAction} />
+          ))
         )}
         <div ref={bottomRef} />
       </div>

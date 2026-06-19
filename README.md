@@ -143,3 +143,415 @@ EAAM9BXipjAcBRqSRqpRn7T5E0vgcZCSwumSjmP17vAZCYONN9SkBZAqD421ZCkMot7uZCbXby7WggxP
 
 cb3692ecbc411d07ab3b161422beecdd - Clave secreta de la aplicación
 Clave secreta de la aplicación
+
+
+
+------------------------------
+
+engine.js
+
+// Orquestador central: recibe un mensaje entrante (de WhatsApp o del simulador),
+// lo registra, corre el flujo, guarda la conversacion, registra y envia las
+// respuestas. Es el unico lugar que une todas las piezas.
+
+import { handleIncoming } from "./flow.js";
+import { generateAIReply } from "./openai.js";
+import {
+  addMessage,
+  getConfig,
+  getConversation,
+  recordOutgoing,
+  saveConversation,
+} from "./store.js";
+import { sendWhatsAppMessage } from "./whatsapp.js";
+
+/**
+ * @param {object} input { conversationId, text, payloadId, source }
+ */
+export async function processIncoming(input) {
+  const { conversationId, text, payloadId, source } = input;
+  const config = getConfig();
+
+  // 1) Registrar el mensaje del usuario (para que se vea en la pantalla).
+  addMessage({
+    conversationId,
+    role: "user",
+    kind: "text",
+    text: text || (payloadId ? `[opcion: ${payloadId}]` : ""),
+    source,
+  });
+
+  // 2) Correr el flujo.
+  const conversation = getConversation(conversationId);
+  const { conversation: nextConv, outgoing } = handleIncoming(
+    conversation,
+    text,
+    payloadId,
+    config,
+  );
+
+  // 3) (Opcional / stand-by) Si la IA estuviera activa podria intervenir aca.
+  //    Hoy generateAIReply devuelve null, asi que usamos el flujo por menus.
+  await generateAIReply(config, nextConv, text).catch(() => null);
+
+  // 4) Guardar estado y enviar/registrar cada respuesta.
+  saveConversation(nextConv);
+  for (const out of outgoing) {
+    recordOutgoing(conversationId, out, source);
+    await sendWhatsAppMessage(conversationId, out);
+  }
+}
+
+
+
+----------------------------
+
+flow
+
+// Motor de flujo conversacional (maquina de estados).
+// Es una funcion pura: recibe la conversacion + texto entrante + config y
+// devuelve el nuevo estado y los mensajes a enviar. La usan tanto el webhook
+// real de WhatsApp como el simulador interno.
+
+/** IDs de los botones / filas del menu oficial. */
+export const MENU_IDS = {
+  HORARIOS: "menu_horarios",
+  PRECIOS: "menu_precios",
+  DIAS: "menu_dias",
+  VOLVER: "menu_volver",
+  REINICIAR: "menu_reiniciar",
+};
+
+function mainMenu() {
+  return {
+    kind: "list",
+    text: "Genial 🙌 ¿En que te puedo ayudar, {nombre}?",
+    buttonText: "Ver opciones",
+    sections: [
+      {
+        title: "Consultas",
+        rows: [
+          {
+            id: MENU_IDS.HORARIOS,
+            title: "🕐 Horarios",
+            description: "Ver el horario de atencion",
+          },
+          {
+            id: MENU_IDS.PRECIOS,
+            title: "💲 Precios",
+            description: "Consultar precios de productos",
+          },
+          {
+            id: MENU_IDS.DIAS,
+            title: "📅 Dias abiertos",
+            description: "Que dias atendemos",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function backButtons() {
+  return {
+    kind: "buttons",
+    text: "¿Necesitas algo mas?",
+    buttons: [
+      { id: MENU_IDS.VOLVER, title: "🔙 Volver al menu" },
+      { id: MENU_IDS.REINICIAR, title: "♻️ Reiniciar" },
+    ],
+  };
+}
+
+function withName(msg, name) {
+  const safe = name && name.trim() ? name.trim() : "";
+  return { ...msg, text: msg.text.replace("{nombre}", safe).replace("  ", " ") };
+}
+
+/**
+ * Procesa un mensaje entrante.
+ * @param {object} conversation  estado actual de la conversacion
+ * @param {string} incomingText  texto plano o titulo del boton presionado
+ * @param {string|undefined} payloadId  id del boton/fila interactiva (si aplica)
+ * @param {object} config  configuracion del negocio
+ */
+export function handleIncoming(conversation, incomingText, payloadId, config) {
+  const conv = { ...conversation, data: { ...conversation.data } };
+  const outgoing = [];
+  const text = (incomingText || "").trim();
+  const id = payloadId;
+
+  // Reinicio global desde cualquier punto.
+  if (id === MENU_IDS.REINICIAR || /^(reiniciar|reset|empezar)$/i.test(text)) {
+    conv.state = "START";
+    conv.data = {};
+  }
+
+  switch (conv.state) {
+    case "START": {
+      outgoing.push({ kind: "text", text: config.greeting });
+      outgoing.push({ kind: "text", text: "Para empezar, ¿cual es tu *nombre*?" });
+      conv.state = "ASK_NAME";
+      break;
+    }
+
+    case "ASK_NAME": {
+      if (!text) {
+        outgoing.push({ kind: "text", text: "Por favor escribime tu *nombre* 🙂" });
+        break;
+      }
+      conv.data.name = text;
+      outgoing.push({
+        kind: "text",
+        text: `Perfecto, ${text}. Ahora decime tu *apellido*.`,
+      });
+      conv.state = "ASK_LASTNAME";
+      break;
+    }
+
+    case "ASK_LASTNAME": {
+      if (!text) {
+        outgoing.push({ kind: "text", text: "Necesito tu *apellido* para continuar." });
+        break;
+      }
+      conv.data.lastName = text;
+      outgoing.push({
+        kind: "text",
+        text: "Genial. Por ultimo, tu numero de *documento* (DNI).",
+      });
+      conv.state = "ASK_DOCUMENT";
+      break;
+    }
+
+    case "ASK_DOCUMENT": {
+      const digits = text.replace(/\D/g, "");
+      if (digits.length < 6) {
+        outgoing.push({
+          kind: "text",
+          text: "Ese documento no parece valido. Escribi solo numeros (min. 6 digitos).",
+        });
+        break;
+      }
+      conv.data.document = digits;
+      outgoing.push({
+        kind: "text",
+        text:
+          `✅ ¡Registro completo!\n\n` +
+          `*Nombre:* ${conv.data.name}\n` +
+          `*Apellido:* ${conv.data.lastName}\n` +
+          `*Documento:* ${conv.data.document}`,
+      });
+      outgoing.push(withName(mainMenu(), conv.data.name));
+      conv.state = "MAIN_MENU";
+      break;
+    }
+
+    case "MAIN_MENU": {
+      const choice = id ?? matchTextToMenu(text);
+      switch (choice) {
+        case MENU_IDS.HORARIOS:
+          outgoing.push({ kind: "text", text: `🕐 *Horarios:*\n${config.hours}` });
+          outgoing.push(backButtons());
+          break;
+        case MENU_IDS.PRECIOS: {
+          const list = config.products
+            .map((p) => `• ${p.name}: ${p.price}`)
+            .join("\n");
+          outgoing.push({
+            kind: "text",
+            text: `💲 *Precios:*\n${list || "Sin productos cargados."}`,
+          });
+          outgoing.push(backButtons());
+          break;
+        }
+        case MENU_IDS.DIAS:
+          outgoing.push({
+            kind: "text",
+            text: `📅 *Dias de atencion:*\n${config.openDays}`,
+          });
+          outgoing.push(backButtons());
+          break;
+        case MENU_IDS.VOLVER:
+          outgoing.push(withName(mainMenu(), conv.data.name));
+          break;
+        default:
+          outgoing.push({
+            kind: "text",
+            text: "No entendi esa opcion 🤔 Elegi una del menu:",
+          });
+          outgoing.push(withName(mainMenu(), conv.data.name));
+      }
+      break;
+    }
+
+    default: {
+      conv.state = "START";
+      outgoing.push({ kind: "text", text: config.greeting });
+      outgoing.push({ kind: "text", text: "Para empezar, ¿cual es tu *nombre*?" });
+      conv.state = "ASK_NAME";
+    }
+  }
+
+  return { conversation: conv, outgoing };
+}
+
+/** Permite que el cliente escriba en texto en vez de tocar el boton. */
+function matchTextToMenu(text) {
+  const t = text.toLowerCase();
+  if (/horari/.test(t)) return MENU_IDS.HORARIOS;
+  if (/precio|cuesta|vale|sale/.test(t)) return MENU_IDS.PRECIOS;
+  if (/dia|abierto|abren|atien/.test(t)) return MENU_IDS.DIAS;
+  if (/volver|menu|atras/.test(t)) return MENU_IDS.VOLVER;
+  return undefined;
+}
+
+
+------------------------
+
+store
+
+// Almacenamiento simple en archivos JSON + memoria.
+// Pensado para correr local sin base de datos. Para produccion conviene
+// reemplazar por una DB real (la interfaz de funciones queda igual).
+
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { publish } from "./events.js";
+
+const DATA_DIR = path.join(process.cwd(), ".data");
+const MESSAGES_FILE = path.join(DATA_DIR, "messages.json");
+const CONVERSATIONS_FILE = path.join(DATA_DIR, "conversations.json");
+const CONFIG_FILE = path.join(DATA_DIR, "config.json");
+
+const DEFAULT_CONFIG = {
+  systemPrompt:
+    "Sos el asistente virtual de la empresa. Atendes por WhatsApp de forma " +
+    "cordial y breve. Guias al cliente por el menu de opciones y respondes " +
+    "consultas de horarios, precios y dias de atencion. No te salis del " +
+    "flujo: si el cliente escribe algo fuera de tema, lo volves a llevar al menu.",
+  businessName: "Mi Negocio",
+  greeting:
+    "¡Hola! 👋 Bienvenido/a a *Mi Negocio*. Te voy a hacer unas preguntas para registrarte.",
+  hours: "Lunes a Viernes de 9:00 a 18:00 hs.",
+  openDays: "Lunes, Martes, Miercoles, Jueves y Viernes.",
+  products: [
+    { name: "Producto A", price: "$10.000" },
+    { name: "Producto B", price: "$18.500" },
+    { name: "Producto C", price: "$25.000" },
+  ],
+};
+
+function ensureDir() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function readJson(file, fallback) {
+  try {
+    ensureDir();
+    if (!fs.existsSync(file)) return fallback;
+    return JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(file, data) {
+  ensureDir();
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+}
+
+/* ---------------------------- CONFIG ---------------------------- */
+
+export function getConfig() {
+  return { ...DEFAULT_CONFIG, ...readJson(CONFIG_FILE, {}) };
+}
+
+export function saveConfig(partial) {
+  const next = { ...getConfig(), ...partial };
+  writeJson(CONFIG_FILE, next);
+  return next;
+}
+
+/* ------------------------- CONVERSATIONS ------------------------ */
+
+function readConversations() {
+  return readJson(CONVERSATIONS_FILE, {});
+}
+
+export function getConversation(id) {
+  const all = readConversations();
+  return all[id] ?? { id, state: "START", data: {}, updatedAt: Date.now() };
+}
+
+export function saveConversation(conv) {
+  const all = readConversations();
+  all[conv.id] = { ...conv, updatedAt: Date.now() };
+  writeJson(CONVERSATIONS_FILE, all);
+}
+
+export function resetConversation(id) {
+  const all = readConversations();
+  delete all[id];
+  writeJson(CONVERSATIONS_FILE, all);
+}
+
+/* --------------------------- MESSAGES --------------------------- */
+
+export function getMessages(conversationId) {
+  const all = readJson(MESSAGES_FILE, []);
+  const list = conversationId
+    ? all.filter((m) => m.conversationId === conversationId)
+    : all;
+  return list.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export function addMessage(msg) {
+  const all = readJson(MESSAGES_FILE, []);
+  const full = {
+    ...msg,
+    id: crypto.randomUUID(),
+    createdAt: Date.now(),
+  };
+  all.push(full);
+  writeJson(MESSAGES_FILE, all);
+  publish(full);
+  return full;
+}
+
+export function clearAll() {
+  writeJson(MESSAGES_FILE, []);
+  writeJson(CONVERSATIONS_FILE, {});
+}
+
+/* ----- helper: convertir OutgoingMessage del flujo a ChatMessage ----- */
+
+export function recordOutgoing(conversationId, out, source, role = "bot") {
+  if (out.kind === "buttons") {
+    return addMessage({
+      conversationId,
+      role,
+      kind: "buttons",
+      text: out.text,
+      buttons: out.buttons,
+      source,
+    });
+  }
+  if (out.kind === "list") {
+    return addMessage({
+      conversationId,
+      role,
+      kind: "list",
+      text: out.text,
+      list: { buttonText: out.buttonText, sections: out.sections },
+      source,
+    });
+  }
+  return addMessage({
+    conversationId,
+    role,
+    kind: "text",
+    text: out.text,
+    source,
+  });
+}

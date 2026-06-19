@@ -9,6 +9,7 @@ const CONVERSATION_ID = "demo";
 
 export default function Home() {
   const [tab, setTab] = useState("chat");
+  const [chatKey, setChatKey] = useState(0); // fuerza re-mount del chat al resetear
 
   const send = async (text, payloadId) => {
     await fetch("/api/simulate", {
@@ -20,7 +21,7 @@ export default function Home() {
 
   const reset = async () => {
     await fetch("/api/reset", { method: "POST" });
-    window.location.reload();
+    setChatKey((k) => k + 1); // re-monta LiveChat limpio, sin reload de página
   };
 
   return (
@@ -30,7 +31,7 @@ export default function Home() {
           🟢 WhatsApp Menu Bot — Panel de control
         </h1>
         <p className="text-sm text-white/50">
-          Flujo guiado con menus oficiales · prompt autoadministrable · OpenAI
+          Flujo guiado con menús oficiales · prompt autoadministrable · OpenAI
           listo en stand-by.
         </p>
       </header>
@@ -53,7 +54,7 @@ export default function Home() {
               : "bg-white/5 text-white/60"
           }`}
         >
-          Configuracion
+          Configuración
         </button>
       </div>
 
@@ -65,7 +66,11 @@ export default function Home() {
           }`}
         >
           <div className="flex-1 overflow-hidden">
-            <LiveChat conversationId={CONVERSATION_ID} onAction={send} />
+            <LiveChat
+              key={chatKey}
+              conversationId={CONVERSATION_ID}
+              onAction={send}
+            />
           </div>
           <Composer
             conversationId={CONVERSATION_ID}
@@ -82,7 +87,7 @@ export default function Home() {
         >
           <div className="border-b border-white/10 px-5 py-3">
             <h2 className="text-sm font-semibold text-white">
-              ⚙️ Configuracion autoadministrada
+              ⚙️ Configuración autoadministrada
             </h2>
           </div>
           <PromptConfig />
