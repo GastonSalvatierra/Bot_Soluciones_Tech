@@ -1,6 +1,5 @@
 // Orquestador central: recibe un mensaje entrante (de WhatsApp o del simulador),
-// lo registra, corre el flujo, guarda la conversacion, registra y envia las
-// respuestas. Es el unico lugar que une todas las piezas.
+// lo registra, corre el flujo, guarda la conversación, registra y envía las respuestas.
 
 import { handleIncoming } from "./flow.js";
 import { generateAIReply } from "./openai.js";
@@ -20,17 +19,21 @@ export async function processIncoming(input) {
   const { conversationId, text, payloadId, source } = input;
   const config = getConfig();
 
-  // 1) Registrar el mensaje del usuario (para que se vea en la pantalla).
+  console.log(`[engine] ← mensaje de ${conversationId} (${source}) | text="${text}" | payloadId="${payloadId}"`);
+
+  // 1) Registrar el mensaje del usuario
   addMessage({
     conversationId,
     role: "user",
     kind: "text",
-    text: text || (payloadId ? `[opcion: ${payloadId}]` : ""),
+    text: text || (payloadId ? `[opción: ${payloadId}]` : ""),
     source,
   });
 
-  // 2) Correr el flujo.
+  // 2) Correr el flujo
   const conversation = getConversation(conversationId);
+  console.log(`[engine] estado actual: ${conversation.state}`);
+
   const { conversation: nextConv, outgoing } = handleIncoming(
     conversation,
     text,
@@ -38,14 +41,19 @@ export async function processIncoming(input) {
     config,
   );
 
-  // 3) (Opcional / stand-by) Si la IA estuviera activa podria intervenir aca.
-  //    Hoy generateAIReply devuelve null, asi que usamos el flujo por menus.
+  console.log(`[engine] estado siguiente: ${nextConv.state} | mensajes a enviar: ${outgoing.length}`);
+
+  // 3) (Stand-by) IA desactivada — generateAIReply devuelve null
   await generateAIReply(config, nextConv, text).catch(() => null);
 
-  // 4) Guardar estado y enviar/registrar cada respuesta.
+  // 4) Guardar estado y enviar cada respuesta
   saveConversation(nextConv);
+
   for (const out of outgoing) {
     recordOutgoing(conversationId, out, source);
-    await sendWhatsAppMessage(conversationId, out);
+    const sent = await sendWhatsAppMessage(conversationId, out);
+    if (source === "whatsapp") {
+      console.log(`[engine] → ${out.kind} enviado a WhatsApp: ${sent}`);
+    }
   }
 }

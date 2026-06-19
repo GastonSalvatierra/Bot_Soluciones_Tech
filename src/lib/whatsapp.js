@@ -1,7 +1,7 @@
 // Cliente de WhatsApp Cloud API (Meta).
-// Convierte los mensajes del flujo en payloads oficiales y los envia.
-// Si no hay credenciales configuradas, NO falla: solo registra los mensajes
-// en el store para que se vean en la pantalla (modo local / stand-by).
+// Convierte los mensajes del flujo en payloads oficiales y los envía.
+// Si no hay credenciales configuradas, NO falla: solo registra en el store
+// para que se vea en la pantalla (modo local / stand-by).
 
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v21.0";
 const PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
@@ -9,6 +9,24 @@ const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
 
 export function isWhatsAppConfigured() {
   return Boolean(PHONE_ID && ACCESS_TOKEN);
+}
+
+/**
+ * Normaliza números argentinos para la API de Meta.
+ *
+ * Meta espera el número SIN el "9" de celular que agrega Argentina:
+ *   54 9 11 XXXX-XXXX  →  5411XXXXXXXX
+ *   54 9 XXX XXXX-XXXX →  54XXXXXXXXXX
+ *
+ * El webhook de Meta manda el número sin "+" ni espacios: "5491126661234"
+ */
+function normalizePhone(raw) {
+  if (!raw) return "";
+  let n = String(raw).replace(/\D/g, "");
+  if (n.startsWith("549")) {
+    n = "54" + n.slice(3);
+  }
+  return n;
 }
 
 function buildPayload(to, msg) {
@@ -58,19 +76,28 @@ function buildPayload(to, msg) {
 }
 
 /**
- * Envia un mensaje a traves de la Cloud API.
- * Devuelve true si se envio realmente; false si esta en modo local.
+ * Envía un mensaje a través de la Cloud API.
+ * Devuelve true si se envió; false si está en modo local o falló.
  */
 export async function sendWhatsAppMessage(to, msg) {
-  if (!isWhatsAppConfigured()) return false;
-
-  // 🛠️ LIMPIEZA CLAVE PARA ARGENTINA: Quitar el "9" si viene de celular (54911... -> 5411...)
-  let cleanTo = to.replace(/\D/g, ""); // Borra cualquier espacio o guión por las dudas
-  if (cleanTo.startsWith("549")) {
-    cleanTo = "54" + cleanTo.slice(3);
+  if (!isWhatsAppConfigured()) {
+    console.log("[whatsapp] Sin credenciales — modo local, no se envía.");
+    return false;
   }
 
+  const cleanTo = normalizePhone(to);
+
+  if (!cleanTo) {
+    console.error("[whatsapp] 'to' está vacío después de normalizar — abortando envío.");
+    return false;
+  }
+
+  const payload = buildPayload(cleanTo, msg);
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_ID}/messages`;
+
+  console.log(`[whatsapp] → enviando a ${cleanTo} | tipo: ${msg.kind}`);
+  console.log("[whatsapp] payload:", JSON.stringify(payload));
+
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -78,18 +105,20 @@ export async function sendWhatsAppMessage(to, msg) {
         Authorization: `Bearer ${ACCESS_TOKEN}`,
         "Content-Type": "application/json",
       },
-      // Usamos el número limpio acá 👇
-      body: JSON.stringify(buildPayload(cleanTo, msg)),
+      body: JSON.stringify(payload),
     });
-    
+
+    const responseText = await res.text();
+
     if (!res.ok) {
-      // 🚨 Esto nos va a escupir en los logs de Vercel por qué rebota exactamente si llega a fallar
-      console.error("WhatsApp API error:", res.status, await res.text());
+      console.error(`[whatsapp] Error ${res.status}:`, responseText);
       return false;
     }
+
+    console.log(`[whatsapp] ✅ Enviado a ${cleanTo}:`, responseText);
     return true;
   } catch (err) {
-    console.error("WhatsApp API fetch failed:", err);
+    console.error("[whatsapp] fetch falló:", err);
     return false;
   }
 }

@@ -1,7 +1,6 @@
 // Motor de flujo conversacional (maquina de estados).
 // Es una funcion pura: recibe la conversacion + texto entrante + config y
-// devuelve el nuevo estado y los mensajes a enviar. La usan tanto el webhook
-// real de WhatsApp como el simulador interno.
+// devuelve el nuevo estado y los mensajes a enviar.
 
 /** IDs de los botones / filas del menu oficial. */
 export const MENU_IDS = {
@@ -10,12 +9,15 @@ export const MENU_IDS = {
   DIAS: "menu_dias",
   VOLVER: "menu_volver",
   REINICIAR: "menu_reiniciar",
+  MAS_SI: "followup_si",
+  MAS_NO: "followup_no",
 };
 
-function mainMenu() {
+function mainMenu(name) {
+  const safe = name && name.trim() ? name.trim() : "";
   return {
     kind: "list",
-    text: "Genial 🙌 ¿En que te puedo ayudar, {nombre}?",
+    text: `¿En qué más te puedo ayudar, ${safe}?`.trim(),
     buttonText: "Ver opciones",
     sections: [
       {
@@ -24,7 +26,7 @@ function mainMenu() {
           {
             id: MENU_IDS.HORARIOS,
             title: "🕐 Horarios",
-            description: "Ver el horario de atencion",
+            description: "Ver el horario de atención",
           },
           {
             id: MENU_IDS.PRECIOS,
@@ -33,8 +35,8 @@ function mainMenu() {
           },
           {
             id: MENU_IDS.DIAS,
-            title: "📅 Dias abiertos",
-            description: "Que dias atendemos",
+            title: "📅 Días abiertos",
+            description: "Qué días atendemos",
           },
         ],
       },
@@ -42,20 +44,16 @@ function mainMenu() {
   };
 }
 
-function backButtons() {
+/** Botones "¿Necesitás algo más?" → Sí / No, listo */
+function followupButtons() {
   return {
     kind: "buttons",
-    text: "¿Necesitas algo mas?",
+    text: "¿Necesitás algo más?",
     buttons: [
-      { id: MENU_IDS.VOLVER, title: "🔙 Volver al menu" },
-      { id: MENU_IDS.REINICIAR, title: "♻️ Reiniciar" },
+      { id: MENU_IDS.MAS_SI, title: "✅ Sí, consultar más" },
+      { id: MENU_IDS.MAS_NO, title: "👋 No, gracias" },
     ],
   };
-}
-
-function withName(msg, name) {
-  const safe = name && name.trim() ? name.trim() : "";
-  return { ...msg, text: msg.text.replace("{nombre}", safe).replace("  ", " ") };
 }
 
 /**
@@ -72,7 +70,7 @@ export function handleIncoming(conversation, incomingText, payloadId, config) {
   const id = payloadId;
 
   // Reinicio global desde cualquier punto.
-  if (id === MENU_IDS.REINICIAR || /^(reiniciar|reset|empezar)$/i.test(text)) {
+  if (id === MENU_IDS.REINICIAR || /^(reiniciar|reset|empezar|hola|inicio)$/i.test(text)) {
     conv.state = "START";
     conv.data = {};
   }
@@ -80,7 +78,7 @@ export function handleIncoming(conversation, incomingText, payloadId, config) {
   switch (conv.state) {
     case "START": {
       outgoing.push({ kind: "text", text: config.greeting });
-      outgoing.push({ kind: "text", text: "Para empezar, ¿cual es tu *nombre*?" });
+      outgoing.push({ kind: "text", text: "Para empezar, ¿cuál es tu *nombre*?" });
       conv.state = "ASK_NAME";
       break;
     }
@@ -107,7 +105,7 @@ export function handleIncoming(conversation, incomingText, payloadId, config) {
       conv.data.lastName = text;
       outgoing.push({
         kind: "text",
-        text: "Genial. Por ultimo, tu numero de *documento* (DNI).",
+        text: "Genial. Por último, tu número de *documento* (DNI).",
       });
       conv.state = "ASK_DOCUMENT";
       break;
@@ -118,7 +116,7 @@ export function handleIncoming(conversation, incomingText, payloadId, config) {
       if (digits.length < 6) {
         outgoing.push({
           kind: "text",
-          text: "Ese documento no parece valido. Escribi solo numeros (min. 6 digitos).",
+          text: "Ese documento no parece válido. Escribí solo números (mín. 6 dígitos).",
         });
         break;
       }
@@ -131,7 +129,7 @@ export function handleIncoming(conversation, incomingText, payloadId, config) {
           `*Apellido:* ${conv.data.lastName}\n` +
           `*Documento:* ${conv.data.document}`,
       });
-      outgoing.push(withName(mainMenu(), conv.data.name));
+      outgoing.push(mainMenu(conv.data.name));
       conv.state = "MAIN_MENU";
       break;
     }
@@ -140,44 +138,75 @@ export function handleIncoming(conversation, incomingText, payloadId, config) {
       const choice = id ?? matchTextToMenu(text);
       switch (choice) {
         case MENU_IDS.HORARIOS:
-          outgoing.push({ kind: "text", text: `🕐 *Horarios:*\n${config.hours}` });
-          outgoing.push(backButtons());
+          outgoing.push({ kind: "text", text: `🕐 *Horarios de atención:*\n${config.hours}` });
+          outgoing.push(followupButtons());
+          conv.state = "FOLLOWUP";
           break;
+
         case MENU_IDS.PRECIOS: {
-          const list = config.products
+          const list = (config.products || [])
             .map((p) => `• ${p.name}: ${p.price}`)
             .join("\n");
           outgoing.push({
             kind: "text",
             text: `💲 *Precios:*\n${list || "Sin productos cargados."}`,
           });
-          outgoing.push(backButtons());
+          outgoing.push(followupButtons());
+          conv.state = "FOLLOWUP";
           break;
         }
+
         case MENU_IDS.DIAS:
           outgoing.push({
             kind: "text",
-            text: `📅 *Dias de atencion:*\n${config.openDays}`,
+            text: `📅 *Días de atención:*\n${config.openDays}`,
           });
-          outgoing.push(backButtons());
+          outgoing.push(followupButtons());
+          conv.state = "FOLLOWUP";
           break;
-        case MENU_IDS.VOLVER:
-          outgoing.push(withName(mainMenu(), conv.data.name));
-          break;
+
         default:
           outgoing.push({
             kind: "text",
-            text: "No entendi esa opcion 🤔 Elegi una del menu:",
+            text: "No entendí esa opción 🤔 Elegí una del menú:",
           });
-          outgoing.push(withName(mainMenu(), conv.data.name));
+          outgoing.push(mainMenu(conv.data.name));
       }
+      break;
+    }
+
+    case "FOLLOWUP": {
+      const choice = id ?? matchFollowup(text);
+
+      if (choice === MENU_IDS.MAS_SI || choice === "si") {
+        // Vuelve al menú principal
+        outgoing.push(mainMenu(conv.data.name));
+        conv.state = "MAIN_MENU";
+      } else if (choice === MENU_IDS.MAS_NO || choice === "no") {
+        // Cierra la conversación amablemente
+        outgoing.push({
+          kind: "text",
+          text: `¡Hasta luego, ${conv.data.name || ""}! 👋 Si necesitás algo más, escribinos cuando quieras.`.trim(),
+        });
+        conv.state = "DONE";
+      } else {
+        // Respuesta no reconocida: repreguntar
+        outgoing.push(followupButtons());
+      }
+      break;
+    }
+
+    case "DONE": {
+      // Cualquier mensaje nuevo reinicia el flujo desde el menú (ya están registrados)
+      outgoing.push(mainMenu(conv.data.name));
+      conv.state = "MAIN_MENU";
       break;
     }
 
     default: {
       conv.state = "START";
       outgoing.push({ kind: "text", text: config.greeting });
-      outgoing.push({ kind: "text", text: "Para empezar, ¿cual es tu *nombre*?" });
+      outgoing.push({ kind: "text", text: "Para empezar, ¿cuál es tu *nombre*?" });
       conv.state = "ASK_NAME";
     }
   }
@@ -185,12 +214,19 @@ export function handleIncoming(conversation, incomingText, payloadId, config) {
   return { conversation: conv, outgoing };
 }
 
-/** Permite que el cliente escriba en texto en vez de tocar el boton. */
+/** Permite escribir en texto en vez de tocar el botón del menú principal. */
 function matchTextToMenu(text) {
   const t = text.toLowerCase();
   if (/horari/.test(t)) return MENU_IDS.HORARIOS;
   if (/precio|cuesta|vale|sale/.test(t)) return MENU_IDS.PRECIOS;
   if (/dia|abierto|abren|atien/.test(t)) return MENU_IDS.DIAS;
-  if (/volver|menu|atras/.test(t)) return MENU_IDS.VOLVER;
+  return undefined;
+}
+
+/** Permite responder "sí" / "no" en texto en el followup. */
+function matchFollowup(text) {
+  const t = text.toLowerCase();
+  if (/^s[ií]|^sip|^dale|^claro|^obvio/.test(t)) return "si";
+  if (/^no|^nop|^listo|^gracias|^chau|^bye/.test(t)) return "no";
   return undefined;
 }

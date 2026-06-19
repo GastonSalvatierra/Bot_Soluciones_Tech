@@ -1,6 +1,6 @@
 // Webhook oficial de WhatsApp Cloud API.
-// GET  -> verificacion del webhook (Meta).
-// POST -> recepcion de mensajes entrantes.
+// GET  -> verificación del webhook (Meta).
+// POST -> recepción de mensajes entrantes.
 
 import { NextResponse } from "next/server";
 import { processIncoming } from "@/lib/engine.js";
@@ -23,17 +23,40 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
+  let body;
   try {
-    const body = await req.json();
+    body = await req.json();
+  } catch (err) {
+    console.error("[webhook] Body inválido:", err);
+    return NextResponse.json({ ok: false });
+  }
 
+  // Log completo para debug — ayuda a ver exactamente qué manda Meta
+  console.log("[webhook] payload completo:", JSON.stringify(body, null, 2));
+
+  try {
     const entries = body?.entry ?? [];
     for (const entry of entries) {
       const changes = entry?.changes ?? [];
       for (const change of changes) {
         const value = change?.value;
-        const messages = value?.messages ?? [];
+
+        // Meta a veces manda eventos sin mensajes (estados de entrega, etc.) — ignorar
+        if (!value?.messages) {
+          console.log("[webhook] cambio sin mensajes (probablemente status update), ignorando.");
+          continue;
+        }
+
+        const messages = value.messages;
         for (const message of messages) {
           const from = message.from;
+
+          // Guardia: si no hay número de origen, no podemos responder
+          if (!from) {
+            console.error("[webhook] Mensaje sin campo 'from':", JSON.stringify(message));
+            continue;
+          }
+
           let text = "";
           let payloadId;
 
@@ -49,10 +72,15 @@ export async function POST(req) {
               text = inter.list_reply?.title ?? "";
             }
           } else if (message.type === "button") {
-            // plantillas: respuesta de boton
             payloadId = message.button?.payload;
             text = message.button?.text ?? "";
+          } else {
+            // Audio, imagen, sticker, etc. — responder con texto
+            console.log(`[webhook] tipo de mensaje no soportado: ${message.type}`);
+            text = "";
           }
+
+          console.log(`[webhook] procesando mensaje de ${from} | tipo: ${message.type} | text: "${text}" | payloadId: "${payloadId}"`);
 
           await processIncoming({
             conversationId: from,
@@ -64,11 +92,10 @@ export async function POST(req) {
       }
     }
 
-    // Meta requiere 200 rapido.
+    // Meta requiere 200 rápido, siempre
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("Webhook error:", err);
-    // Devolvemos 200 igual para que Meta no reintente en loop.
+    console.error("[webhook] Error procesando payload:", err);
     return NextResponse.json({ ok: false });
   }
 }
