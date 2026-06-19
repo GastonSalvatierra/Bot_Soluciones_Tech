@@ -1,24 +1,16 @@
-// Almacenamiento adaptado: JSON para local, Memoria RAM para Serverless (Vercel).
+// Almacenamiento simple en archivos JSON + memoria.
+// Pensado para correr local sin base de datos. Para produccion conviene
+// reemplazar por una DB real (la interfaz de funciones queda igual).
 
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { publish } from "./events.js";
 
-// Detectar si está ejecutándose en Vercel
-const IS_VERCEL = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
-
 const DATA_DIR = path.join(process.cwd(), ".data");
 const MESSAGES_FILE = path.join(DATA_DIR, "messages.json");
 const CONVERSATIONS_FILE = path.join(DATA_DIR, "conversations.json");
 const CONFIG_FILE = path.join(DATA_DIR, "config.json");
-
-// Memoria RAM volátil para producción (Vercel)
-const memoryStore = {
-  config: {},
-  conversations: {},
-  messages: []
-};
 
 const DEFAULT_CONFIG = {
   systemPrompt:
@@ -26,9 +18,9 @@ const DEFAULT_CONFIG = {
     "cordial y breve. Guias al cliente por el menu de opciones y respondes " +
     "consultas de horarios, precios y dias de atencion. No te salis del " +
     "flujo: si el cliente escribe algo fuera de tema, lo volves a llevar al menu.",
-  businessName: "Soluciones Tech",
+  businessName: "Mi Negocio",
   greeting:
-    "¡Hola! 👋 Bienvenido/a a *Soluciones Tech*. Te voy a hacer unas preguntas para registrarte.",
+    "¡Hola! 👋 Bienvenido/a a *Mi Negocio*. Te voy a hacer unas preguntas para registrarte.",
   hours: "Lunes a Viernes de 9:00 a 18:00 hs.",
   openDays: "Lunes, Martes, Miercoles, Jueves y Viernes.",
   products: [
@@ -39,15 +31,10 @@ const DEFAULT_CONFIG = {
 };
 
 function ensureDir() {
-  if (IS_VERCEL) return;
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-function readJson(file, fallback, memoryKey) {
-  if (IS_VERCEL) {
-    if (memoryKey === "config" && Object.keys(memoryStore.config).length === 0) return fallback;
-    return memoryStore[memoryKey] ?? fallback;
-  }
+function readJson(file, fallback) {
   try {
     ensureDir();
     if (!fs.existsSync(file)) return fallback;
@@ -57,11 +44,7 @@ function readJson(file, fallback, memoryKey) {
   }
 }
 
-function writeJson(file, data, memoryKey) {
-  if (IS_VERCEL) {
-    memoryStore[memoryKey] = data;
-    return;
-  }
+function writeJson(file, data) {
   ensureDir();
   fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
 }
@@ -69,19 +52,19 @@ function writeJson(file, data, memoryKey) {
 /* ---------------------------- CONFIG ---------------------------- */
 
 export function getConfig() {
-  return { ...DEFAULT_CONFIG, ...readJson(CONFIG_FILE, {}, "config") };
+  return { ...DEFAULT_CONFIG, ...readJson(CONFIG_FILE, {}) };
 }
 
 export function saveConfig(partial) {
   const next = { ...getConfig(), ...partial };
-  writeJson(CONFIG_FILE, next, "config");
+  writeJson(CONFIG_FILE, next);
   return next;
 }
 
 /* ------------------------- CONVERSATIONS ------------------------ */
 
 function readConversations() {
-  return readJson(CONVERSATIONS_FILE, {}, "conversations");
+  return readJson(CONVERSATIONS_FILE, {});
 }
 
 export function getConversation(id) {
@@ -92,19 +75,19 @@ export function getConversation(id) {
 export function saveConversation(conv) {
   const all = readConversations();
   all[conv.id] = { ...conv, updatedAt: Date.now() };
-  writeJson(CONVERSATIONS_FILE, all, "conversations");
+  writeJson(CONVERSATIONS_FILE, all);
 }
 
 export function resetConversation(id) {
   const all = readConversations();
   delete all[id];
-  writeJson(CONVERSATIONS_FILE, all, "conversations");
+  writeJson(CONVERSATIONS_FILE, all);
 }
 
 /* --------------------------- MESSAGES --------------------------- */
 
 export function getMessages(conversationId) {
-  const all = readJson(MESSAGES_FILE, [], "messages");
+  const all = readJson(MESSAGES_FILE, []);
   const list = conversationId
     ? all.filter((m) => m.conversationId === conversationId)
     : all;
@@ -112,21 +95,21 @@ export function getMessages(conversationId) {
 }
 
 export function addMessage(msg) {
-  const all = readJson(MESSAGES_FILE, [], "messages");
+  const all = readJson(MESSAGES_FILE, []);
   const full = {
     ...msg,
     id: crypto.randomUUID(),
     createdAt: Date.now(),
   };
   all.push(full);
-  writeJson(MESSAGES_FILE, all, "messages");
+  writeJson(MESSAGES_FILE, all);
   publish(full);
   return full;
 }
 
 export function clearAll() {
-  writeJson(MESSAGES_FILE, [], "messages");
-  writeJson(CONVERSATIONS_FILE, {}, "conversations");
+  writeJson(MESSAGES_FILE, []);
+  writeJson(CONVERSATIONS_FILE, {});
 }
 
 /* ----- helper: convertir OutgoingMessage del flujo a ChatMessage ----- */
