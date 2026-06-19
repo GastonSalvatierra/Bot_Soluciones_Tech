@@ -10,19 +10,27 @@ import {
   recordOutgoing,
   saveConversation,
 } from "./store.js";
-import { sendWhatsAppMessage } from "./whatsapp.js";
+import { sendWhatsAppMessage, normalizePhone } from "./whatsapp.js";
 
 /**
  * @param {object} input { conversationId, text, payloadId, source }
  */
 export async function processIncoming(input) {
-  const { conversationId, text, payloadId, source } = input;
-  const config = getConfig();
+  // Normalizar el número ANTES de usarlo como clave — corrige el bug del "9" argentino:
+  // Meta manda "5491126661234" en el webhook, pero la Cloud API espera "541126661234"
+  // al enviar. Al normalizar acá, ambas operaciones usan el mismo ID.
+  const conversationId =
+    input.source === "whatsapp"
+      ? normalizePhone(input.conversationId)
+      : input.conversationId;
+
+  const { text, payloadId, source } = input;
+  const config = await getConfig();
 
   console.log(`[engine] ← mensaje de ${conversationId} (${source}) | text="${text}" | payloadId="${payloadId}"`);
 
   // 1) Registrar el mensaje del usuario
-  addMessage({
+  await addMessage({
     conversationId,
     role: "user",
     kind: "text",
@@ -31,7 +39,7 @@ export async function processIncoming(input) {
   });
 
   // 2) Correr el flujo
-  const conversation = getConversation(conversationId);
+  const conversation = await getConversation(conversationId);
   console.log(`[engine] estado actual: ${conversation.state}`);
 
   const { conversation: nextConv, outgoing } = handleIncoming(
@@ -47,10 +55,10 @@ export async function processIncoming(input) {
   await generateAIReply(config, nextConv, text).catch(() => null);
 
   // 4) Guardar estado y enviar cada respuesta
-  saveConversation(nextConv);
+  await saveConversation(nextConv);
 
   for (const out of outgoing) {
-    recordOutgoing(conversationId, out, source);
+    await recordOutgoing(conversationId, out, source);
     const sent = await sendWhatsAppMessage(conversationId, out);
     if (source === "whatsapp") {
       console.log(`[engine] → ${out.kind} enviado a WhatsApp: ${sent}`);

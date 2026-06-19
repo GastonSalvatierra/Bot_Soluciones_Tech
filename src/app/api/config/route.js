@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(getConfig());
+  return NextResponse.json(await getConfig());
 }
 
 export async function POST(req) {
@@ -29,7 +29,7 @@ export async function POST(req) {
         .filter((p) => p && typeof p.name === "string")
         .map((p) => ({ name: String(p.name), price: String(p.price ?? "") }));
 
-    const next = saveConfig(allowed);
+    const next = await saveConfig(allowed);
     return NextResponse.json(next);
   } catch {
     return NextResponse.json({ error: "Datos invalidos" }, { status: 400 });

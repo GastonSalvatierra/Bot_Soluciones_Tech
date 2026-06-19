@@ -1,24 +1,36 @@
-// Almacenamiento adaptado: JSON para local, Memoria RAM para Serverless (Vercel).
+// Almacenamiento con Supabase.
+// Reemplaza la versión anterior (JSON local / RAM).
+//
+// Variables de entorno requeridas:
+//   SUPABASE_URL        → Settings → API → Project URL
+//   SUPABASE_SERVICE_KEY → Settings → API → service_role (secret)
 
-import fs from "node:fs";
-import path from "node:path";
+import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { publish } from "./events.js";
 
-// Detectar si está ejecutándose en Vercel
-const IS_VERCEL = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
+// Cliente "perezoso": se crea recién la primera vez que se necesita,
+// no al importar el módulo. Esto evita que `npm run build` falle si
+// las env vars todavía no están seteadas (por ejemplo en Vercel antes
+// de configurarlas, o si falta el .env.local en desarrollo).
+let _supabase = null;
 
-const DATA_DIR = path.join(process.cwd(), ".data");
-const MESSAGES_FILE = path.join(DATA_DIR, "messages.json");
-const CONVERSATIONS_FILE = path.join(DATA_DIR, "conversations.json");
-const CONFIG_FILE = path.join(DATA_DIR, "config.json");
+function getSupabase() {
+  if (_supabase) return _supabase;
 
-// Memoria RAM volátil para producción (Vercel)
-const memoryStore = {
-  config: {},
-  conversations: {},
-  messages: []
-};
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_KEY;
+
+  if (!url || !key) {
+    throw new Error(
+      "[store] Faltan SUPABASE_URL y/o SUPABASE_SERVICE_KEY. " +
+      "Creá un .env.local con esos valores (ver .env.example).",
+    );
+  }
+
+  _supabase = createClient(url, key);
+  return _supabase;
+}
 
 const DEFAULT_CONFIG = {
   systemPrompt:
@@ -38,100 +50,142 @@ const DEFAULT_CONFIG = {
   ],
 };
 
-function ensureDir() {
-  if (IS_VERCEL) return;
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+/* ================================================================
+   CONFIG
+   ================================================================ */
 
-function readJson(file, fallback, memoryKey) {
-  if (IS_VERCEL) {
-    if (memoryKey === "config" && Object.keys(memoryStore.config).length === 0) return fallback;
-    return memoryStore[memoryKey] ?? fallback;
+export async function getConfig() {
+  const { data, error } = await getSupabase()
+    .from("config")
+    .select("data")
+    .eq("id", "default")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[store] getConfig error:", error.message);
+    return { ...DEFAULT_CONFIG };
   }
-  try {
-    ensureDir();
-    if (!fs.existsSync(file)) return fallback;
-    return JSON.parse(fs.readFileSync(file, "utf-8"));
-  } catch {
-    return fallback;
-  }
+
+  return { ...DEFAULT_CONFIG, ...(data?.data ?? {}) };
 }
 
-function writeJson(file, data, memoryKey) {
-  if (IS_VERCEL) {
-    memoryStore[memoryKey] = data;
-    return;
-  }
-  ensureDir();
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
-}
+export async function saveConfig(partial) {
+  const current = await getConfig();
+  const next = { ...current, ...partial };
 
-/* ---------------------------- CONFIG ---------------------------- */
+  const { error } = await getSupabase()
+    .from("config")
+    .upsert({ id: "default", data: next, updated_at: new Date().toISOString() });
 
-export function getConfig() {
-  return { ...DEFAULT_CONFIG, ...readJson(CONFIG_FILE, {}, "config") };
-}
-
-export function saveConfig(partial) {
-  const next = { ...getConfig(), ...partial };
-  writeJson(CONFIG_FILE, next, "config");
+  if (error) console.error("[store] saveConfig error:", error.message);
   return next;
 }
 
-/* ------------------------- CONVERSATIONS ------------------------ */
+/* ================================================================
+   CONVERSATIONS
+   ================================================================ */
 
-function readConversations() {
-  return readJson(CONVERSATIONS_FILE, {}, "conversations");
+export async function getConversation(id) {
+  const { data, error } = await getSupabase()
+    .from("conversations")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[store] getConversation error:", error.message);
+  }
+
+  return data
+    ? { id: data.id, state: data.state, data: data.data ?? {} }
+    : { id, state: "START", data: {} };
 }
 
-export function getConversation(id) {
-  const all = readConversations();
-  return all[id] ?? { id, state: "START", data: {}, updatedAt: Date.now() };
+export async function saveConversation(conv) {
+  const { error } = await getSupabase().from("conversations").upsert({
+    id: conv.id,
+    state: conv.state,
+    data: conv.data ?? {},
+    updated_at: new Date().toISOString(),
+  });
+
+  if (error) console.error("[store] saveConversation error:", error.message);
 }
 
-export function saveConversation(conv) {
-  const all = readConversations();
-  all[conv.id] = { ...conv, updatedAt: Date.now() };
-  writeJson(CONVERSATIONS_FILE, all, "conversations");
+export async function resetConversation(id) {
+  const { error } = await getSupabase()
+    .from("conversations")
+    .delete()
+    .eq("id", id);
+
+  if (error) console.error("[store] resetConversation error:", error.message);
 }
 
-export function resetConversation(id) {
-  const all = readConversations();
-  delete all[id];
-  writeJson(CONVERSATIONS_FILE, all, "conversations");
+/* ================================================================
+   MESSAGES
+   ================================================================ */
+
+export async function getMessages(conversationId) {
+  let query = getSupabase()
+    .from("messages")
+    .select("*")
+    .order("created_at", { ascending: true });
+
+  if (conversationId) {
+    query = query.eq("conversation_id", conversationId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("[store] getMessages error:", error.message);
+    return [];
+  }
+
+  // Devolver en el mismo formato que esperan los componentes
+  return (data ?? []).map(rowToMessage);
 }
 
-/* --------------------------- MESSAGES --------------------------- */
+export async function addMessage(msg) {
+  const id = crypto.randomUUID();
+  const createdAt = Date.now();
 
-export function getMessages(conversationId) {
-  const all = readJson(MESSAGES_FILE, [], "messages");
-  const list = conversationId
-    ? all.filter((m) => m.conversationId === conversationId)
-    : all;
-  return list.sort((a, b) => a.createdAt - b.createdAt);
-}
+  // Separar campos "extra" (buttons, list) del resto
+  const { buttons, list, ...base } = msg;
+  const extra = {};
+  if (buttons) extra.buttons = buttons;
+  if (list) extra.list = list;
 
-export function addMessage(msg) {
-  const all = readJson(MESSAGES_FILE, [], "messages");
-  const full = {
-    ...msg,
-    id: crypto.randomUUID(),
-    createdAt: Date.now(),
+  const row = {
+    id,
+    conversation_id: msg.conversationId,
+    role: msg.role,
+    kind: msg.kind,
+    text: msg.text ?? null,
+    extra: Object.keys(extra).length ? extra : null,
+    source: msg.source ?? null,
+    created_at: new Date(createdAt).toISOString(),
   };
-  all.push(full);
-  writeJson(MESSAGES_FILE, all, "messages");
+
+  const { error } = await getSupabase().from("messages").insert(row);
+
+  if (error) console.error("[store] addMessage error:", error.message);
+
+  const full = { ...msg, id, createdAt };
   publish(full);
   return full;
 }
 
-export function clearAll() {
-  writeJson(MESSAGES_FILE, [], "messages");
-  writeJson(CONVERSATIONS_FILE, {}, "conversations");
+export async function clearAll() {
+  await getSupabase().from("messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  await getSupabase().from("conversations").delete().neq("id", "");
 }
 
-/* ----- helper: convertir OutgoingMessage del flujo a ChatMessage ----- */
+/* ================================================================
+   HELPER: recordOutgoing (sin cambios de API)
+   ================================================================ */
 
-export function recordOutgoing(conversationId, out, source, role = "bot") {
+export async function recordOutgoing(conversationId, out, source, role = "bot") {
   if (out.kind === "buttons") {
     return addMessage({
       conversationId,
@@ -159,4 +213,22 @@ export function recordOutgoing(conversationId, out, source, role = "bot") {
     text: out.text,
     source,
   });
+}
+
+/* ================================================================
+   INTERNO: convertir fila de Supabase → formato que usa la app
+   ================================================================ */
+
+function rowToMessage(row) {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    role: row.role,
+    kind: row.kind,
+    text: row.text ?? "",
+    buttons: row.extra?.buttons ?? undefined,
+    list: row.extra?.list ?? undefined,
+    source: row.source ?? undefined,
+    createdAt: new Date(row.created_at).getTime(),
+  };
 }

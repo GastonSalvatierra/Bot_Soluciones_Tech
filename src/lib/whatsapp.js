@@ -20,7 +20,7 @@ export function isWhatsAppConfigured() {
  *
  * El webhook de Meta manda el número sin "+" ni espacios: "5491126661234"
  */
-function normalizePhone(raw) {
+export function normalizePhone(raw) {
   if (!raw) return "";
   let n = String(raw).replace(/\D/g, "");
   if (n.startsWith("549")) {
