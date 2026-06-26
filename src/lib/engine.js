@@ -27,8 +27,6 @@ export async function processIncoming(input) {
   const { text, payloadId, source } = input;
   const config = await getConfig();
 
-  console.log(`[engine] ← mensaje de ${conversationId} (${source}) | text="${text}" | payloadId="${payloadId}"`);
-
   // 1) Registrar el mensaje del usuario
   await addMessage({
     conversationId,
@@ -40,7 +38,11 @@ export async function processIncoming(input) {
 
   // 2) Correr el flujo
   const conversation = await getConversation(conversationId);
-  console.log(`[engine] estado actual: ${conversation.state}`);
+
+  // Si el bot está pausado para esta conversación, solo guardar el mensaje del usuario y salir
+  if (conversation.data?.botPaused && source === "whatsapp") {
+    return;
+  }
 
   const { conversation: nextConv, outgoing } = handleIncoming(
     conversation,
@@ -49,19 +51,19 @@ export async function processIncoming(input) {
     config,
   );
 
-  console.log(`[engine] estado siguiente: ${nextConv.state} | mensajes a enviar: ${outgoing.length}`);
-
   // 3) (Stand-by) IA desactivada — generateAIReply devuelve null
   await generateAIReply(config, nextConv, text).catch(() => null);
 
   // 4) Guardar estado y enviar cada respuesta
   await saveConversation(nextConv);
 
+  console.log(`[engine] ${conversationId} ${conversation.state} → ${nextConv.state} (${outgoing.length} msg)`);
+
   for (const out of outgoing) {
     await recordOutgoing(conversationId, out, source);
-    const sent = await sendWhatsAppMessage(conversationId, out);
     if (source === "whatsapp") {
-      console.log(`[engine] → ${out.kind} enviado a WhatsApp: ${sent}`);
+      const sent = await sendWhatsAppMessage(conversationId, out);
+      if (!sent) console.error(`[engine] fallo envio a ${conversationId} | kind: ${out.kind}`);
     }
   }
 }
