@@ -34,19 +34,24 @@ function getSupabase() {
 
 const DEFAULT_CONFIG = {
   systemPrompt:
-    "Sos el asistente virtual de la empresa. Atendes por WhatsApp de forma " +
-    "cordial y breve. Guias al cliente por el menu de opciones y respondes " +
-    "consultas de horarios, precios y dias de atencion. No te salis del " +
-    "flujo: si el cliente escribe algo fuera de tema, lo volves a llevar al menu.",
-  businessName: "Soluciones Tech",
+    "Sos el asistente virtual de El Rincón del Sabor, una rotisería. " +
+    "Atendés por WhatsApp de forma cordial y breve. Guiás al cliente para hacer pedidos, " +
+    "les mostrás la carta, les pedís dirección si es a domicilio y les informás cómo pagar. " +
+    "No te salís del flujo.",
+  businessName: "El Rincón del Sabor",
   greeting:
-    "¡Hola! 👋 Bienvenido/a a *Soluciones Tech*. Te voy a hacer unas preguntas para registrarte.",
-  hours: "Lunes a Viernes de 9:00 a 18:00 hs.",
-  openDays: "Lunes, Martes, Miercoles, Jueves y Viernes.",
+    "¡Hola! 👋 Bienvenido/a a *El Rincón del Sabor*. ¿En qué te puedo ayudar hoy?",
+  hours: "Lunes a Sábado de 11:00 a 15:00 y de 19:00 a 23:00 hs.",
+  openDays: "Lunes a Domingo.",
+  address: "Av. Rivadavia 4521, CABA",
+  paymentAlias: "rincondesabor.mp",
+  paymentCBU: "",
   products: [
-    { name: "Producto A", price: "$10.000" },
-    { name: "Producto B", price: "$18.500" },
-    { name: "Producto C", price: "$25.000" },
+    { name: "Pollo entero al horno", price: "$9.500" },
+    { name: "Colita de cuadril (x kg)", price: "$14.000" },
+    { name: "Guiso de lentejas", price: "$4.200" },
+    { name: "Lasagna de carne", price: "$4.500" },
+    { name: "Flan casero", price: "$2.200" },
   ],
 };
 

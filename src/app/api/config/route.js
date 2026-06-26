@@ -24,6 +24,9 @@ export async function POST(req) {
     if (typeof body.greeting === "string") allowed.greeting = body.greeting;
     if (typeof body.hours === "string") allowed.hours = body.hours;
     if (typeof body.openDays === "string") allowed.openDays = body.openDays;
+    if (typeof body.address === "string") allowed.address = body.address;
+    if (typeof body.paymentAlias === "string") allowed.paymentAlias = body.paymentAlias;
+    if (typeof body.paymentCBU === "string") allowed.paymentCBU = body.paymentCBU;
     if (Array.isArray(body.products))
       allowed.products = body.products
         .filter((p) => p && typeof p.name === "string")
