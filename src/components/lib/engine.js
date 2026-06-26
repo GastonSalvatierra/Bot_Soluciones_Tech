@@ -39,6 +39,11 @@ export async function processIncoming(input) {
   // 2) Correr el flujo
   const conversation = await getConversation(conversationId);
 
+  // Si el bot está pausado para esta conversación, solo guardar el mensaje del usuario y salir
+  if (conversation.data?.botPaused && source === "whatsapp") {
+    return;
+  }
+
   const { conversation: nextConv, outgoing } = handleIncoming(
     conversation,
     text,
