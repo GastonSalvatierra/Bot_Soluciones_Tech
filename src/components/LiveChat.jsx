@@ -28,7 +28,7 @@ function Bubble({ msg, onAction }) {
             {msg.buttons.map((b) => (
               <button
                 key={b.id}
-                onClick={() => onAction(b.id, b.title)}
+                onClick={() => onAction(b.title, b.id)}
                 className="rounded-lg border border-wa-green/40 bg-white px-3 py-1.5 text-center text-sm font-medium text-wa-green-dark transition hover:bg-wa-green/10"
               >
                 {b.title}
@@ -48,7 +48,7 @@ function Bubble({ msg, onAction }) {
                   {s.rows.map((r) => (
                     <button
                       key={r.id}
-                      onClick={() => onAction(r.id, r.title)}
+                      onClick={() => onAction(r.title, r.id)}
                       className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-left transition hover:bg-wa-green/10"
                     >
                       <span className="block text-sm font-medium text-neutral-800">
