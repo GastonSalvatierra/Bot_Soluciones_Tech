@@ -176,9 +176,11 @@ export async function addMessage(msg) {
   return full;
 }
 
-export async function clearAll() {
-  await getSupabase().from("messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-  await getSupabase().from("conversations").delete().neq("id", "");
+// Solo limpia la conversación del simulador ("demo").
+// NUNCA toca conversaciones reales de WhatsApp.
+export async function clearAll(conversationId = "demo") {
+  await getSupabase().from("messages").delete().eq("conversation_id", conversationId);
+  await getSupabase().from("conversations").delete().eq("id", conversationId);
 }
 
 /* ================================================================
