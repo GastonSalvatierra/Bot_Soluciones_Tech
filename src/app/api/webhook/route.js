@@ -4,6 +4,7 @@
 
 import { NextResponse } from "next/server";
 import { processIncoming } from "@/lib/engine.js";
+import { fetchWhatsAppMediaAsDataUrl } from "@/lib/whatsapp.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,7 +32,6 @@ export async function POST(req) {
     return NextResponse.json({ ok: false });
   }
 
-  // Log completo para debug — ayuda a ver exactamente qué manda Meta
   console.log("[webhook] payload completo:", JSON.stringify(body, null, 2));
 
   try {
@@ -41,7 +41,6 @@ export async function POST(req) {
       for (const change of changes) {
         const value = change?.value;
 
-        // Meta a veces manda eventos sin mensajes (estados de entrega, etc.) — ignorar
         if (!value?.messages) {
           console.log("[webhook] cambio sin mensajes (probablemente status update), ignorando.");
           continue;
@@ -50,8 +49,6 @@ export async function POST(req) {
         const messages = value.messages;
         for (const message of messages) {
           const from = message.from;
-
-          // Guardia: si no hay número de origen, no podemos responder
           if (!from) {
             console.error("[webhook] Mensaje sin campo 'from':", JSON.stringify(message));
             continue;
@@ -59,6 +56,8 @@ export async function POST(req) {
 
           let text = "";
           let payloadId;
+          let imageDataUrl;
+          let mediaCaption;
 
           if (message.type === "text") {
             text = message.text?.body ?? "";
@@ -74,8 +73,15 @@ export async function POST(req) {
           } else if (message.type === "button") {
             payloadId = message.button?.payload;
             text = message.button?.text ?? "";
+          } else if (message.type === "image") {
+            // Imagen entrante: la descargamos y la pasamos como data URL.
+            // NO se persiste en DB — sólo se ve en el chat hasta que reinicie el server.
+            const mediaId = message.image?.id;
+            mediaCaption  = message.image?.caption || "";
+            imageDataUrl  = await fetchWhatsAppMediaAsDataUrl(mediaId);
+            text          = mediaCaption || "[imagen recibida]";
+            console.log(`[webhook] imagen recibida de ${from} | media_id=${mediaId} | descargada=${Boolean(imageDataUrl)}`);
           } else {
-            // Audio, imagen, sticker, etc. — responder con texto
             console.log(`[webhook] tipo de mensaje no soportado: ${message.type}`);
             text = "";
           }
@@ -87,12 +93,13 @@ export async function POST(req) {
             text,
             payloadId,
             source: "whatsapp",
+            imageDataUrl,
+            mediaCaption,
           });
         }
       }
     }
 
-    // Meta requiere 200 rápido, siempre
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[webhook] Error procesando payload:", err);

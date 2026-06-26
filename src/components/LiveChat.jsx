@@ -29,6 +29,25 @@ function Bubble({ msg, onAction }) {
           style={{ display: "none" }}
         />
 
+        {msg.kind === "image" && msg.imageDataUrl && (
+          <img
+            src={msg.imageDataUrl}
+            alt="Imagen recibida"
+            className="mb-1 max-h-72 w-auto max-w-full rounded-lg object-contain"
+          />
+        )}
+        {msg.kind === "image" && !msg.imageDataUrl && (
+          <p className="mb-1 text-[11px] italic opacity-60">
+            🖼️ Imagen no disponible (no persistida)
+          </p>
+        )}
+        {msg.kind === "image" && msg.text && msg.text !== "[imagen]" && msg.text !== "[imagen recibida]" && (
+          <p
+            className="whitespace-pre-wrap leading-relaxed text-[13.5px] mt-1"
+            dangerouslySetInnerHTML={{ __html: renderText(msg.text) }}
+          />
+        )}
+
         {msg.kind === "text" && (
           <p
             className="whitespace-pre-wrap leading-relaxed text-[13.5px]"

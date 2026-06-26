@@ -1,5 +1,4 @@
 // Almacenamiento con Supabase.
-// Reemplaza la versión anterior (JSON local / RAM).
 //
 // Variables de entorno requeridas:
 //   SUPABASE_URL        → Settings → API → Project URL
@@ -9,10 +8,6 @@ import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { publish } from "./events.js";
 
-// Cliente "perezoso": se crea recién la primera vez que se necesita,
-// no al importar el módulo. Esto evita que `npm run build` falle si
-// las env vars todavía no están seteadas (por ejemplo en Vercel antes
-// de configurarlas, o si falta el .env.local en desarrollo).
 let _supabase = null;
 
 function getSupabase() {
@@ -54,6 +49,30 @@ const DEFAULT_CONFIG = {
     { name: "Flan casero", price: "$2.200" },
   ],
 };
+
+/* ================================================================
+   CACHE EFÍMERO DE IMÁGENES
+   ----------------------------------------------------------------
+   Las imágenes entrantes NO se persisten en la DB (pedido del usuario).
+   Las guardamos en RAM por message-id; sobreviven mientras el proceso
+   esté vivo. Si el server reinicia, se pierden — esto es esperado.
+   ================================================================ */
+const IMAGE_CACHE = new Map();           // messageId -> dataUrl
+const MAX_IMAGES  = 200;                  // límite de seguridad
+
+function cacheImage(id, dataUrl) {
+  if (!dataUrl) return;
+  if (IMAGE_CACHE.size >= MAX_IMAGES) {
+    // eliminar la entrada más vieja (FIFO)
+    const firstKey = IMAGE_CACHE.keys().next().value;
+    if (firstKey) IMAGE_CACHE.delete(firstKey);
+  }
+  IMAGE_CACHE.set(id, dataUrl);
+}
+
+export function getCachedImage(id) {
+  return IMAGE_CACHE.get(id) ?? null;
+}
 
 /* ================================================================
    CONFIG
@@ -147,7 +166,8 @@ export async function getMessages(conversationId) {
     return [];
   }
 
-  // Devolver en el mismo formato que esperan los componentes
+  // Devolver en el mismo formato que esperan los componentes,
+  // adjuntando imageDataUrl si está en el cache efímero.
   return (data ?? []).map(rowToMessage);
 }
 
@@ -155,8 +175,8 @@ export async function addMessage(msg) {
   const id = crypto.randomUUID();
   const createdAt = Date.now();
 
-  // Separar campos "extra" (buttons, list) del resto
-  const { buttons, list, ...base } = msg;
+  // Separar campos "extra" del resto. imageDataUrl NUNCA va a la DB.
+  const { buttons, list, imageDataUrl, ...base } = msg;
   const extra = {};
   if (buttons) extra.buttons = buttons;
   if (list) extra.list = list;
@@ -176,20 +196,21 @@ export async function addMessage(msg) {
 
   if (error) console.error("[store] addMessage error:", error.message);
 
+  // Cachear imagen en RAM (sólo se ve hasta que el server reinicie)
+  if (imageDataUrl) cacheImage(id, imageDataUrl);
+
   const full = { ...msg, id, createdAt };
   publish(full);
   return full;
 }
 
-// Solo limpia la conversación del simulador ("demo").
-// NUNCA toca conversaciones reales de WhatsApp.
 export async function clearAll(conversationId = "demo") {
   await getSupabase().from("messages").delete().eq("conversation_id", conversationId);
   await getSupabase().from("conversations").delete().eq("id", conversationId);
 }
 
 /* ================================================================
-   HELPER: recordOutgoing (sin cambios de API)
+   HELPER: recordOutgoing
    ================================================================ */
 
 export async function recordOutgoing(conversationId, out, source, role = "bot") {
@@ -237,5 +258,7 @@ function rowToMessage(row) {
     list: row.extra?.list ?? undefined,
     source: row.source ?? undefined,
     createdAt: new Date(row.created_at).getTime(),
+    // Adjuntar la imagen efímera si todavía está en RAM
+    imageDataUrl: IMAGE_CACHE.get(row.id) ?? undefined,
   };
 }

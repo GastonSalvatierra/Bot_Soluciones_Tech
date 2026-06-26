@@ -26,10 +26,27 @@ function Bubble({ msg }) {
             Agente
           </p>
         )}
-        <p
-          className="whitespace-pre-wrap leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: renderText(msg.text || "") }}
-        />
+
+        {/* Imagen efímera entrante (no se persiste). Si el server reinicia, desaparece. */}
+        {msg.kind === "image" && msg.imageDataUrl && (
+          <img
+            src={msg.imageDataUrl}
+            alt="Imagen recibida"
+            className="mb-1 max-h-72 w-auto max-w-full rounded-lg object-contain"
+          />
+        )}
+        {msg.kind === "image" && !msg.imageDataUrl && (
+          <p className="mb-1 text-[11px] italic opacity-60">
+            🖼️ Imagen no disponible (no persistida)
+          </p>
+        )}
+
+        {msg.text && (
+          <p
+            className="whitespace-pre-wrap leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: renderText(msg.text || "") }}
+          />
+        )}
 
         {msg.kind === "buttons" && msg.buttons && (
           <div className="mt-2 flex flex-col gap-1">
@@ -118,6 +135,55 @@ function BotToggle({ botPaused, onChange, loading }) {
   );
 }
 
+// Controles para cambiar el estado de pago/pedido de la conversación
+function PaymentControls({ conversationId, onChanged }) {
+  const [busy, setBusy] = useState(null); // "verified" | "rejected" | "pending"
+
+  const setStatus = async (status) => {
+    if (busy) return;
+    setBusy(status);
+    try {
+      const res = await fetch("/api/order-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId, status }),
+      });
+      if (res.ok) onChanged?.();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-shrink-0 items-center gap-1.5 border-b border-white/8 bg-white/[0.03] px-4 py-2">
+      <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-white/40">
+        Estado de pago:
+      </span>
+      <button
+        onClick={() => setStatus("verified")}
+        disabled={busy !== null}
+        className="rounded-lg bg-emerald-500/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30 transition hover:bg-emerald-500/25 disabled:opacity-40"
+      >
+        {busy === "verified" ? "…" : "✅ Confirmar"}
+      </button>
+      <button
+        onClick={() => setStatus("pending")}
+        disabled={busy !== null}
+        className="rounded-lg bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-300 ring-1 ring-amber-500/30 transition hover:bg-amber-500/25 disabled:opacity-40"
+      >
+        {busy === "pending" ? "…" : "⏳ Pendiente"}
+      </button>
+      <button
+        onClick={() => setStatus("rejected")}
+        disabled={busy !== null}
+        className="rounded-lg bg-red-500/15 px-2.5 py-1 text-[11px] font-semibold text-red-300 ring-1 ring-red-500/30 transition hover:bg-red-500/25 disabled:opacity-40"
+      >
+        {busy === "rejected" ? "…" : "❌ Rechazar"}
+      </button>
+    </div>
+  );
+}
+
 export default function ChatViewer({ conversationId }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -163,11 +229,11 @@ export default function ChatViewer({ conversationId }) {
       );
       if (!res.ok) return;
       const data = await res.json();
-      const newMsgs = data.filter((m) => !seenIds.current.has(m.id));
-      if (newMsgs.length > 0) {
-        newMsgs.forEach((m) => seenIds.current.add(m.id));
-        setMessages((prev) => [...prev, ...newMsgs]);
-      }
+      // Reemplazamos toda la lista para que las imágenes efímeras
+      // (que vienen del cache del server) se reflejen aunque ya
+      // hubiéramos visto el id antes.
+      data.forEach((m) => seenIds.current.add(m.id));
+      setMessages(data);
     } catch {
       // silencioso
     } finally {
@@ -245,6 +311,9 @@ export default function ChatViewer({ conversationId }) {
         />
       </div>
 
+      {/* Controles de estado de pago — visibles siempre, útiles para verificar */}
+      <PaymentControls conversationId={conversationId} onChanged={fetchMessages} />
+
       {/* Banner cuando bot está pausado */}
       {botPaused && (
         <div className="flex flex-shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/8 px-4 py-2">
@@ -290,13 +359,13 @@ export default function ChatViewer({ conversationId }) {
             <button
               onClick={sendManual}
               disabled={sending || !text.trim()}
-              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-amber-500 text-white transition hover:bg-amber-400 disabled:opacity-40"
+              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-amber-500 text-white shadow disabled:opacity-40"
               aria-label="Enviar"
             >
               ➤
             </button>
           </div>
-          <p className="mt-2 text-center text-[10px] text-white/20">
+          <p className="mt-1 text-center text-[10px] text-white/30">
             Enter para enviar · Shift+Enter nueva línea · se envía por WhatsApp
           </p>
         </div>

@@ -13,28 +13,42 @@ import {
 import { sendWhatsAppMessage, normalizePhone } from "./whatsapp.js";
 
 /**
- * @param {object} input { conversationId, text, payloadId, source }
+ * @param {object} input
+ *   { conversationId, text, payloadId, source, imageDataUrl?, mediaCaption? }
+ *
+ *   imageDataUrl  → data:image/...;base64,...  (NO se persiste, sólo se muestra)
+ *   mediaCaption  → caption opcional adjunto a una imagen entrante
  */
 export async function processIncoming(input) {
-  // Normalizar el número ANTES de usarlo como clave — corrige el bug del "9" argentino:
-  // Meta manda "5491126661234" en el webhook, pero la Cloud API espera "541126661234"
-  // al enviar. Al normalizar acá, ambas operaciones usan el mismo ID.
+  // Normalizar el número ANTES de usarlo como clave — corrige el bug del "9" argentino
   const conversationId =
     input.source === "whatsapp"
       ? normalizePhone(input.conversationId)
       : input.conversationId;
 
-  const { text, payloadId, source } = input;
+  const { text, payloadId, source, imageDataUrl, mediaCaption } = input;
   const config = await getConfig();
 
   // 1) Registrar el mensaje del usuario
-  await addMessage({
-    conversationId,
-    role: "user",
-    kind: "text",
-    text: text || (payloadId ? `[opción: ${payloadId}]` : ""),
-    source,
-  });
+  //    Si llegó una imagen: kind="image" + imageDataUrl efímero (no se guarda en DB)
+  if (imageDataUrl) {
+    await addMessage({
+      conversationId,
+      role: "user",
+      kind: "image",
+      text: mediaCaption || "[imagen]",
+      imageDataUrl,         // <-- el store NO lo escribe en DB
+      source,
+    });
+  } else {
+    await addMessage({
+      conversationId,
+      role: "user",
+      kind: "text",
+      text: text || (payloadId ? `[opción: ${payloadId}]` : ""),
+      source,
+    });
+  }
 
   // 2) Correr el flujo
   const conversation = await getConversation(conversationId);
@@ -44,15 +58,19 @@ export async function processIncoming(input) {
     return;
   }
 
+  // Imágenes: tratamos como texto vacío para que el flujo pueda interpretar
+  // (típicamente llegan en AWAIT_PAYMENT como comprobante)
+  const flowText = imageDataUrl ? (mediaCaption || "") : text;
+
   const { conversation: nextConv, outgoing } = handleIncoming(
     conversation,
-    text,
+    flowText,
     payloadId,
     config,
   );
 
   // 3) (Stand-by) IA desactivada — generateAIReply devuelve null
-  await generateAIReply(config, nextConv, text).catch(() => null);
+  await generateAIReply(config, nextConv, flowText).catch(() => null);
 
   // 4) Guardar estado y enviar cada respuesta
   await saveConversation(nextConv);

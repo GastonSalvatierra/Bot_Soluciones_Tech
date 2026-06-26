@@ -195,6 +195,37 @@ for (const cat of CATALOGO) {
 // ── IDs de categorías para navegación ────────────────────────────
 const CAT_IDS = CATALOGO.map((c) => c.id);
 
+// ── Límites WhatsApp Cloud API (interactive list) ────────────────
+// title fila: 24, description fila: 72, title sección: 24,
+// máx 10 filas por sección, máx 10 secciones por lista.
+const WA_TITLE_MAX = 24;
+const WA_DESC_MAX  = 72;
+const WA_ROWS_PER_SECTION = 10;
+
+// Trunca con elipsis preservando el límite real
+function clip(str, n) {
+  const s = String(str ?? "");
+  if (s.length <= n) return s;
+  return s.slice(0, Math.max(0, n - 1)).trimEnd() + "…";
+}
+
+// Construye {title, description} respetando los límites
+// title corto + nombre completo + precio en description (si entran)
+function rowFromItem(item) {
+  const priceStr = `$${item.price.toLocaleString("es-AR")}`;
+  const fullName = item.name;
+  const isLong   = fullName.length > WA_TITLE_MAX;
+
+  const title = isLong ? clip(fullName, WA_TITLE_MAX) : fullName;
+  // Si el title quedó truncado, ponemos el nombre completo + precio en description.
+  // Si no, description = precio.
+  const description = isLong
+    ? clip(`${fullName} — ${priceStr}`, WA_DESC_MAX)
+    : priceStr;
+
+  return { id: item.id, title, description };
+}
+
 // ── Helpers UI ───────────────────────────────────────────────────
 
 function mainMenu() {
@@ -219,41 +250,54 @@ function categoryMenu() {
         title: "Categorías",
         rows: CATALOGO.map((c) => ({
           id: c.id,
-          title: c.name,
-          description: `${c.items.length} opciones`,
+          title: clip(c.name, WA_TITLE_MAX),
+          description: clip(`${c.items.length} opciones`, WA_DESC_MAX),
         })),
       },
     ],
   };
 }
 
+// Paginación de productos: si una categoría tiene más de 10 ítems,
+// los partimos en secciones de hasta 10. Mantiene una sección final con
+// navegación. WhatsApp permite hasta 10 secciones por lista (=100 ítems).
 function itemsMenu(catId) {
   const cat = CATALOGO.find((c) => c.id === catId);
   if (!cat) return categoryMenu();
+
+  const items = cat.items;
+  const groups = Math.max(1, Math.ceil(items.length / WA_ROWS_PER_SECTION));
+
+  const sections = [];
+  for (let i = 0; i < groups; i++) {
+    const slice = items.slice(i * WA_ROWS_PER_SECTION, (i + 1) * WA_ROWS_PER_SECTION);
+    const sectionTitle = groups > 1
+      ? clip(`${cat.name} ${i + 1}/${groups}`, WA_TITLE_MAX)
+      : clip(cat.name, WA_TITLE_MAX);
+    sections.push({
+      title: sectionTitle,
+      rows: slice.map(rowFromItem),
+    });
+  }
+
+  // Sección de navegación al final (cuenta como 1 sección extra)
+  sections.push({
+    title: "Navegación",
+    rows: [{ id: "nav_back_cats", title: "⬅️ Volver a categorías", description: "" }],
+  });
+
   return {
     kind: "list",
     text: `${cat.name} — Elegí un producto:`,
     buttonText: "Ver productos",
-    sections: [
-      {
-        title: cat.name,
-        rows: cat.items.map((item) => ({
-          id: item.id,
-          title: item.name,
-          description: `$${item.price.toLocaleString("es-AR")}`,
-        })),
-      },
-      {
-        title: "Navegación",
-        rows: [{ id: "nav_back_cats", title: "⬅️ Volver a categorías", description: "" }],
-      },
-    ],
+    sections,
   };
 }
 
 function qtyMenu(itemId) {
   const item = ITEM_MAP[itemId];
   if (!item) return categoryMenu();
+  const backCatId = CATALOGO.find(c => c.items.some(i => i.id === itemId))?.id;
   return {
     kind: "list",
     text: `*${item.name}* — $${item.price.toLocaleString("es-AR")}\n\n¿Cuántas unidades?`,
@@ -263,13 +307,13 @@ function qtyMenu(itemId) {
         title: "Cantidad",
         rows: [1, 2, 3, 4, 5, 6].map((n) => ({
           id: `qty_${n}_${itemId}`,
-          title: `${n} unidad${n > 1 ? "es" : ""}`,
-          description: `Subtotal: $${(item.price * n).toLocaleString("es-AR")}`,
+          title: clip(`${n} unidad${n > 1 ? "es" : ""}`, WA_TITLE_MAX),
+          description: clip(`Subtotal: $${(item.price * n).toLocaleString("es-AR")}`, WA_DESC_MAX),
         })),
       },
       {
         title: "Volver",
-        rows: [{ id: `nav_back_cat_${CATALOGO.find(c=>c.items.some(i=>i.id===itemId))?.id}`, title: "⬅️ Volver a la categoría", description: "" }],
+        rows: [{ id: `nav_back_cat_${backCatId}`, title: "⬅️ Volver a la categoría", description: "" }],
       },
     ],
   };

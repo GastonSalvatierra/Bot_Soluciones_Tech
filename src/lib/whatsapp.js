@@ -29,6 +29,13 @@ export function normalizePhone(raw) {
   return n;
 }
 
+// Trunca con elipsis preservando el límite real (idéntico al de flow.js)
+function clip(str, n) {
+  const s = String(str ?? "");
+  if (s.length <= n) return s;
+  return s.slice(0, Math.max(0, n - 1)).trimEnd() + "…";
+}
+
 function buildPayload(to, msg) {
   const base = { messaging_product: "whatsapp", to };
 
@@ -46,14 +53,24 @@ function buildPayload(to, msg) {
         action: {
           buttons: msg.buttons.slice(0, 3).map((b) => ({
             type: "reply",
-            reply: { id: b.id, title: b.title.slice(0, 20) },
+            reply: { id: b.id, title: clip(b.title, 20) },
           })),
         },
       },
     };
   }
 
-  // list
+  // list — WhatsApp permite hasta 10 secciones y 10 filas por sección.
+  // Limitamos ambos por seguridad y truncamos textos con elipsis.
+  const sections = (msg.sections || []).slice(0, 10).map((s) => ({
+    title: clip(s.title, 24),
+    rows: (s.rows || []).slice(0, 10).map((r) => ({
+      id: r.id,
+      title: clip(r.title, 24),
+      description: r.description ? clip(r.description, 72) : undefined,
+    })),
+  }));
+
   return {
     ...base,
     type: "interactive",
@@ -61,15 +78,8 @@ function buildPayload(to, msg) {
       type: "list",
       body: { text: msg.text },
       action: {
-        button: msg.buttonText.slice(0, 20),
-        sections: msg.sections.map((s) => ({
-          title: s.title.slice(0, 24),
-          rows: s.rows.map((r) => ({
-            id: r.id,
-            title: r.title.slice(0, 24),
-            description: r.description ? r.description.slice(0, 72) : undefined,
-          })),
-        })),
+        button: clip(msg.buttonText, 20),
+        sections,
       },
     },
   };
@@ -96,7 +106,6 @@ export async function sendWhatsAppMessage(to, msg) {
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_ID}/messages`;
 
   console.log(`[whatsapp] → enviando a ${cleanTo} | tipo: ${msg.kind}`);
-  console.log("[whatsapp] payload:", JSON.stringify(payload));
 
   try {
     const res = await fetch(url, {
@@ -108,17 +117,59 @@ export async function sendWhatsAppMessage(to, msg) {
       body: JSON.stringify(payload),
     });
 
-    const responseText = await res.text();
-
     if (!res.ok) {
-      console.error(`[whatsapp] Error ${res.status}:`, responseText);
+      const body = await res.text();
+      console.error(`[whatsapp] Error ${res.status} → ${cleanTo}:`, body);
+      console.error("[whatsapp] payload que falló:", JSON.stringify(payload));
       return false;
     }
 
-    console.log(`[whatsapp] ✅ Enviado a ${cleanTo}:`, responseText);
     return true;
   } catch (err) {
     console.error("[whatsapp] fetch falló:", err);
     return false;
+  }
+}
+
+/**
+ * Descarga un media (imagen, audio, doc) de WhatsApp Cloud API.
+ * Devuelve un data URL base64 listo para mostrar en <img src=...>.
+ * NO persiste nada en disco ni en DB — sólo retorna el data URL.
+ */
+export async function fetchWhatsAppMediaAsDataUrl(mediaId) {
+  if (!ACCESS_TOKEN) {
+    console.warn("[whatsapp] fetchMedia: sin ACCESS_TOKEN, no se puede descargar.");
+    return null;
+  }
+  if (!mediaId) return null;
+
+  try {
+    // 1) Pedir la URL temporal del media
+    const metaRes = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+    });
+    if (!metaRes.ok) {
+      console.error(`[whatsapp] fetchMedia meta ${metaRes.status}:`, await metaRes.text());
+      return null;
+    }
+    const meta = await metaRes.json();
+    const url      = meta.url;
+    const mimeType = meta.mime_type || "image/jpeg";
+    if (!url) return null;
+
+    // 2) Descargar el binario con el mismo token
+    const binRes = await fetch(url, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+    });
+    if (!binRes.ok) {
+      console.error(`[whatsapp] fetchMedia bin ${binRes.status}`);
+      return null;
+    }
+    const ab = await binRes.arrayBuffer();
+    const b64 = Buffer.from(ab).toString("base64");
+    return `data:${mimeType};base64,${b64}`;
+  } catch (err) {
+    console.error("[whatsapp] fetchMedia error:", err);
+    return null;
   }
 }
