@@ -1,98 +1,130 @@
 "use client";
 
 import { useState } from "react";
+import ConversationList from "@/components/ConversationList.jsx";
+import ChatViewer from "@/components/ChatViewer.jsx";
 import LiveChat from "@/components/LiveChat.jsx";
 import Composer from "@/components/Composer.jsx";
-import PromptConfig from "@/components/PromptConfig.jsx";
 
-const CONVERSATION_ID = "demo";
+const SIM_ID = "demo";
 
 export default function Home() {
-  const [tab, setTab] = useState("chat");
-  const [chatKey, setChatKey] = useState(0); // fuerza re-mount del chat al resetear
+  const [selectedId, setSelectedId] = useState(null);
+  const [simKey, setSimKey] = useState(0);
+  const [mobileTab, setMobileTab] = useState("chats"); // "chats" | "viewer" | "sim"
 
   const send = async (text, payloadId) => {
     await fetch("/api/simulate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversationId: CONVERSATION_ID, text, payloadId }),
+      body: JSON.stringify({ conversationId: SIM_ID, text, payloadId }),
     });
   };
 
   const reset = async () => {
     await fetch("/api/reset", { method: "POST" });
-    setChatKey((k) => k + 1); // re-monta LiveChat limpio, sin reload de página
+    setSimKey((k) => k + 1);
+  };
+
+  const handleSelect = (id) => {
+    setSelectedId(id);
+    setMobileTab("viewer");
   };
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-4 p-4 md:p-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-bold text-white md:text-2xl">
-          🟢 WhatsApp Menu Bot — Panel de control
-        </h1>
-        <p className="text-sm text-white/50">
-          Flujo guiado con menús oficiales · prompt autoadministrable · OpenAI
-          listo en stand-by.
-        </p>
+    <div className="flex h-screen flex-col bg-wa-bg">
+      {/* Top bar */}
+      <header className="flex flex-shrink-0 items-center gap-3 border-b border-white/8 bg-wa-panel px-5 py-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-wa-green/20 text-lg">
+          🟢
+        </div>
+        <div>
+          <h1 className="text-[14px] font-bold leading-tight text-white">
+            WhatsApp Bot — Panel
+          </h1>
+          <p className="text-[11px] text-white/35">
+            Conversaciones reales · Simulador de flujo
+          </p>
+        </div>
+
+        {/* Nav móvil */}
+        <div className="ml-auto flex gap-1 md:hidden">
+          {[
+            { id: "chats", label: "Chats" },
+            { id: "viewer", label: "Ver" },
+            { id: "sim", label: "Test" },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setMobileTab(t.id)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                mobileTab === t.id
+                  ? "bg-wa-green text-white"
+                  : "bg-white/8 text-white/50 hover:bg-white/12"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </header>
 
-      {/* Tabs solo en mobile */}
-      <div className="flex gap-2 md:hidden">
-        <button
-          onClick={() => setTab("chat")}
-          className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium ${
-            tab === "chat" ? "bg-wa-green text-white" : "bg-white/5 text-white/60"
+      {/* Main: 3 columnas en desktop, tabs en mobile */}
+      <div className="flex min-h-0 flex-1">
+        {/* ── Columna 1: Lista de conversaciones ── */}
+        <aside
+          className={`flex-shrink-0 border-r border-white/8 bg-wa-panel md:w-[260px] ${
+            mobileTab === "chats" ? "flex w-full flex-col" : "hidden md:flex md:flex-col"
           }`}
         >
-          Mensajes
-        </button>
-        <button
-          onClick={() => setTab("config")}
-          className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium ${
-            tab === "config"
-              ? "bg-wa-green text-white"
-              : "bg-white/5 text-white/60"
-          }`}
-        >
-          Configuración
-        </button>
-      </div>
+          <ConversationList selectedId={selectedId} onSelect={handleSelect} />
+        </aside>
 
-      <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
-        {/* Columna chat */}
-        <section
-          className={`flex h-[78vh] flex-col overflow-hidden rounded-xl border border-white/10 bg-wa-panel ${
-            tab === "chat" ? "" : "hidden md:flex"
+        {/* ── Columna 2: Visor del chat real ── */}
+        <main
+          className={`min-w-0 flex-1 border-r border-white/8 bg-[oklch(0.19_0.02_160)] ${
+            mobileTab === "viewer" ? "flex flex-col" : "hidden md:flex md:flex-col"
           }`}
         >
-          <div className="flex-1 overflow-hidden">
-            <LiveChat
-              key={chatKey}
-              conversationId={CONVERSATION_ID}
-              onAction={send}
+          <ChatViewer conversationId={selectedId} />
+        </main>
+
+        {/* ── Columna 3: Simulador de flujo ── */}
+        <aside
+          className={`flex-shrink-0 bg-wa-panel md:w-[340px] ${
+            mobileTab === "sim" ? "flex w-full flex-col" : "hidden md:flex md:flex-col"
+          }`}
+        >
+          {/* Header del simulador */}
+          <div className="flex items-center gap-2 border-b border-white/8 px-4 py-3">
+            <span className="text-base">🧪</span>
+            <div>
+              <p className="text-[13px] font-semibold text-white/90">
+                Simulador de flujo
+              </p>
+              <p className="text-[11px] text-white/35">
+                Probá el bot como si fueses un cliente
+              </p>
+            </div>
+          </div>
+
+          {/* Chat simulado */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="flex-1 overflow-hidden">
+              <LiveChat
+                key={simKey}
+                conversationId={SIM_ID}
+                onAction={send}
+              />
+            </div>
+            <Composer
+              conversationId={SIM_ID}
+              onSend={send}
+              onReset={reset}
             />
           </div>
-          <Composer
-            conversationId={CONVERSATION_ID}
-            onSend={send}
-            onReset={reset}
-          />
-        </section>
-
-        {/* Columna config */}
-        <section
-          className={`flex h-[78vh] flex-col overflow-hidden rounded-xl border border-white/10 bg-wa-panel ${
-            tab === "config" ? "" : "hidden md:flex"
-          }`}
-        >
-          <div className="border-b border-white/10 px-5 py-3">
-            <h2 className="text-sm font-semibold text-white">
-              ⚙️ Configuración autoadministrada
-            </h2>
-          </div>
-          <PromptConfig />
-        </section>
+        </aside>
       </div>
-    </main>
+    </div>
   );
 }
