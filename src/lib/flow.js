@@ -196,11 +196,15 @@ for (const cat of CATALOGO) {
 const CAT_IDS = CATALOGO.map((c) => c.id);
 
 // ── Límites WhatsApp Cloud API (interactive list) ────────────────
-// title fila: 24, description fila: 72, title sección: 24,
-// máx 10 filas por sección, máx 10 secciones por lista.
+// title fila: 24, description fila: 72, title sección: 24.
+// IMPORTANTE: Meta acepta hasta 10 secciones, pero el TOTAL de filas
+// en toda la lista NO PUEDE superar 10. Si se excede, la API rechaza
+// el mensaje silenciosamente (no llega nada al usuario).
 const WA_TITLE_MAX = 24;
 const WA_DESC_MAX  = 72;
-const WA_ROWS_PER_SECTION = 10;
+const WA_ROWS_TOTAL_MAX = 10;
+// 7 productos + hasta 3 filas de navegación (Volver, Anterior, Siguiente) = 10
+const PAGE_SIZE = 7;
 
 // Trunca con elipsis preservando el límite real
 function clip(str, n) {
@@ -258,37 +262,56 @@ function categoryMenu() {
   };
 }
 
-// Paginación de productos: si una categoría tiene más de 10 ítems,
-// los partimos en secciones de hasta 10. Mantiene una sección final con
-// navegación. WhatsApp permite hasta 10 secciones por lista (=100 ítems).
-function itemsMenu(catId) {
+// Paginación real: WhatsApp permite máx 10 filas TOTALES por lista.
+// Mostramos PAGE_SIZE productos por página + nav (Volver/Anterior/Siguiente).
+function itemsMenu(catId, pageIdx = 0) {
   const cat = CATALOGO.find((c) => c.id === catId);
   if (!cat) return categoryMenu();
 
   const items = cat.items;
-  const groups = Math.max(1, Math.ceil(items.length / WA_ROWS_PER_SECTION));
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const page = Math.min(Math.max(0, pageIdx), totalPages - 1);
+  const slice = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  const sections = [];
-  for (let i = 0; i < groups; i++) {
-    const slice = items.slice(i * WA_ROWS_PER_SECTION, (i + 1) * WA_ROWS_PER_SECTION);
-    const sectionTitle = groups > 1
-      ? clip(`${cat.name} ${i + 1}/${groups}`, WA_TITLE_MAX)
-      : clip(cat.name, WA_TITLE_MAX);
-    sections.push({
-      title: sectionTitle,
-      rows: slice.map(rowFromItem),
+  const productRows = slice.map(rowFromItem);
+
+  // Filas de navegación (máx 3 para no pasar de 10 totales)
+  const navRows = [];
+  if (page > 0) {
+    navRows.push({
+      id: `nav_page_${catId}_${page - 1}`,
+      title: clip("◀️ Anterior", WA_TITLE_MAX),
+      description: clip(`Página ${page} de ${totalPages}`, WA_DESC_MAX),
     });
   }
-
-  // Sección de navegación al final (cuenta como 1 sección extra)
-  sections.push({
-    title: "Navegación",
-    rows: [{ id: "nav_back_cats", title: "⬅️ Volver a categorías", description: "" }],
+  if (page < totalPages - 1) {
+    navRows.push({
+      id: `nav_page_${catId}_${page + 1}`,
+      title: clip("Siguiente ▶️", WA_TITLE_MAX),
+      description: clip(`Página ${page + 2} de ${totalPages}`, WA_DESC_MAX),
+    });
+  }
+  navRows.push({
+    id: "nav_back_cats",
+    title: clip("⬅️ Volver a categorías", WA_TITLE_MAX),
   });
+
+  const sectionTitle = totalPages > 1
+    ? clip(`${cat.name} ${page + 1}/${totalPages}`, WA_TITLE_MAX)
+    : clip(cat.name, WA_TITLE_MAX);
+
+  const sections = [
+    { title: sectionTitle, rows: productRows },
+    { title: "Navegación", rows: navRows },
+  ];
+
+  const headerText = totalPages > 1
+    ? `${cat.name} — Página ${page + 1} de ${totalPages}\nElegí un producto:`
+    : `${cat.name} — Elegí un producto:`;
 
   return {
     kind: "list",
-    text: `${cat.name} — Elegí un producto:`,
+    text: headerText,
     buttonText: "Ver productos",
     sections,
   };
@@ -481,6 +504,16 @@ export function handleIncoming(conversation, incomingText, payloadId, config) {
         const backCat = id.replace("nav_back_cat_", "");
         out.push(itemsMenu(backCat));
         conv.state = "PICK_ITEM";
+        break;
+      }
+      // Paginación: nav_page_{catId}_{pageIdx}
+      if (id && id.startsWith("nav_page_")) {
+        const rest = id.replace("nav_page_", "");
+        const lastUnderscore = rest.lastIndexOf("_");
+        const pageCat = rest.slice(0, lastUnderscore);
+        const pageIdx = parseInt(rest.slice(lastUnderscore + 1), 10) || 0;
+        conv.data.currentCat = pageCat;
+        out.push(itemsMenu(pageCat, pageIdx));
         break;
       }
 
