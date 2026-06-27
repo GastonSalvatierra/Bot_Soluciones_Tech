@@ -58,7 +58,7 @@ function stateColor(conv) {
 // Tabs de filtro
 const TABS = [
   { id: "all",     label: "Todos" },
-  { id: "verify",  label: "⏳ Verificar" },
+  { id: "verify",  label: "⏳ Revisar pago" },
   { id: "active",  label: "🤖 Activos" },
   { id: "done",    label: "✅ Listos" },
 ];
@@ -67,8 +67,13 @@ function matchTab(conv, tab) {
   if (tab === "all") return true;
   const state = conv.state || "";
   const data  = conv.data  || {};
-  if (tab === "verify") return state === "WAIT_CONFIRM" || !!data.awaitingVerification;
-  if (tab === "active") return !["DONE","START","","WAIT_CONFIRM"].includes(state) && !data.awaitingVerification;
+  const needsReview =
+    state === "WAIT_CONFIRM" ||
+    state === "AWAIT_PAYMENT" ||
+    !!data.awaitingVerification ||
+    !!data.paymentRequested;
+  if (tab === "verify") return needsReview;
+  if (tab === "active") return !["DONE","START","","WAIT_CONFIRM","AWAIT_PAYMENT"].includes(state) && !needsReview;
   if (tab === "done")   return state === "DONE";
   return true;
 }
@@ -97,7 +102,11 @@ export default function ConversationList({ selectedId, onSelect }) {
   }, [fetchConversations]);
 
   const pendingCount = conversations.filter(
-    (c) => c.state === "WAIT_CONFIRM" || c.data?.awaitingVerification
+    (c) =>
+      c.state === "WAIT_CONFIRM" ||
+      c.state === "AWAIT_PAYMENT" ||
+      c.data?.awaitingVerification ||
+      c.data?.paymentRequested
   ).length;
 
   const filtered = conversations.filter((c) => {
